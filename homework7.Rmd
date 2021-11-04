@@ -1,0 +1,209 @@
+---
+title: 'Bios 6301: Assignment 7'
+author: 'Yeji Ko'
+output: pdf_document
+---
+
+*Due Thursday, 04 November, 1:00 PM*
+
+$5^{n=day}$ points taken off for each day late.
+
+40 points total.
+
+Submit a single knitr file (named `homework7.rmd`), along with a valid PDF output file. Inside the file, clearly indicate which parts of your responses go with which problems (you may use the original homework document as a template). Add your name as `author` to the file's metadata section. Raw R code/output or word processor files are not acceptable.
+
+Failure to name file `homework7.rmd` or include author name may result in 5 points taken off.
+
+### Question 1 ###
+
+**21 points**
+
+Use the following code to generate data for patients with repeated measures of A1C (a test for levels of blood glucose).
+
+```{r}
+genData <- function(n) {
+    if(exists(".Random.seed", envir = .GlobalEnv)) {
+        save.seed <- get(".Random.seed", envir= .GlobalEnv)
+        on.exit(assign(".Random.seed", save.seed, envir = .GlobalEnv))
+    } else {
+        on.exit(rm(".Random.seed", envir = .GlobalEnv))
+    }
+    set.seed(n)
+    subj <- ceiling(n / 10)
+    id <- sample(subj, n, replace=TRUE)
+    times <- as.integer(difftime(as.POSIXct("2005-01-01"), as.POSIXct("2000-01-01"), units='secs'))
+    dt <- as.POSIXct(sample(times, n), origin='2000-01-01')
+    mu <- runif(subj, 4, 10)
+    a1c <- unsplit(mapply(rnorm, tabulate(id), mu, SIMPLIFY=FALSE), id)
+    data.frame(id, dt, a1c)
+}
+x <- genData(500)
+```
+
+Perform the following manipulations: (3 points each)
+
+1. Order the data set by `id` and `dt`.
+```{r}
+head(x[order(x$id, x$dt),],10)
+```
+
+2. For each `id`, determine if there is more than a one year gap in between observations. Add a new row at the one year mark, with the `a1c` value set to missing.  A two year gap would require two new rows, and so forth.
+```{r}
+library(data.table)
+library(dplyr)
+
+x <- data.table(x[order(x$id, x$dt),])
+
+x[, diff := difftime(dt, shift(dt, fill=dt[1L]),
+                      units="days"), by=id]
+
+oneyr <- which(x$diff>=365 & x$diff<730)
+twoyr <- which(x$diff>=730 & x$diff<1095)
+
+x1 <- x[sort(c(seq_len(nrow(x)), oneyr)), ]
+x2 <- x1[sort(c(seq_len(nrow(x1)), twoyr, twoyr)), ]
+
+x2 <- x2 %>% group_by(id) %>% mutate(a1c = replace(a1c, duplicated(diff), NA))
+
+head(x2,10)
+```
+3. Create a new column `visit`.  For each `id`, add the visit number.  This should be 1 to `n` where `n` is the number of observations for an individual.  This should include the observations created with missing a1c values.
+```{r}
+x3 <- group_by(x2, id) %>% mutate(visit = row_number())
+head(x3,10)
+```
+
+4. For each `id`, replace missing values with the mean `a1c` value for that individual.
+```{r}
+x4 <- x3 %>% group_by(id) %>% mutate(a1c= ifelse(is.na(a1c), mean(a1c,na.rm = T),a1c))
+head(x4,10)
+```
+
+5. Print mean `a1c` for each `id`.
+```{r}
+group_by(x4, id) %>% summarise(mean = mean(a1c))
+```
+
+6. Print total number of visits for each `id`.
+```{r}
+tally(group_by(x4, id))
+```
+
+7. Print the observations for `id = 15`.
+```{r}
+x4[x4[,'id'] == 15,]
+```
+
+### Question 2 ###
+
+**16 points**
+
+Install the `lexicon` package. Load the `sw_fry_1000` vector, which contains 1,000 common words.
+
+```{r}
+data('sw_fry_1000', package = 'lexicon')
+head(sw_fry_1000)
+```
+
+1. Remove all non-alphabetical characters and make all characters lowercase. Save the result as `a`.
+
+```{r}
+a <- tolower(gsub("[^[:alpha:] ]",'', sw_fry_1000))
+```
+
+Use vector `a` for the following questions. (2 points each)
+
+2. How many words contain the string "ar"?
+
+```{r}
+length(grep('ar',a))
+```
+
+3. Find a six-letter word that starts with "l" and ends with "r".
+
+```{r}
+a[grep('^l[a-z]{4}r$', a)]
+```
+
+4. Return all words that start with "col" or end with "eck".
+
+```{r}
+a[grep('^col|eck$', a)]
+```
+
+5. Find the number of words that contain 4 or more adjacent consonants. Assume "y" is always a consonant.
+
+```{r}
+length(a[grep("[^aeiou]{4,}", a)])
+```
+
+6. Return all words with a "q" that isn't followed by a "ui".
+
+```{r}
+a[grep("q.[^ui]",a)]
+```
+
+7. Find all words that contain a "k" followed by another letter. Run the `table` command on the first character following the first "k" of each word.
+
+```{r}
+a[grep('k[a-z]+', a)]
+
+k <- a[grep('k[a-z]+', a)] 
+table(substr(sub('^[a-z]*(k[a-z]+$)', '\\1', k), 2,2))
+```
+
+8. Remove all vowels. How many character strings are found exactly once?
+
+```{r}
+sum(nchar(gsub('[aeiou]','', a))==1)
+```
+
+### Question 3 ###
+
+**3 points**
+
+The first argument to most functions that fit linear models are formulas.  The following example defines the response variable `death` and allows the model to incorporate all other variables as terms. `.` is used to mean all columns not otherwise in the formula.
+
+```{r}
+library(readr)
+
+url <- "https://github.com/couthcommander/Bios6301/raw/master/datasets/haart.csv"
+haart <- read_csv("~/Bios6301/datasets/haart.csv")
+haart_df <- haart[,c('death','weight','hemoglobin','cd4baseline')]
+coef(summary(glm(death ~ ., data=haart_df, family=binomial(logit))))
+```
+
+
+Now imagine running the above several times, but with a different response and data set each time.  Here's a function:
+
+```{r}
+myfun <- function(dat, response) {
+  form <- as.formula(response ~ .)
+  coef(summary(glm(formula=form, data=dat, family=binomial(logit))))
+}
+```
+
+Unfortunately, it doesn't work. `tryCatch` is "catching" the error so that this file can be knit to PDF.
+
+```{r}
+tryCatch(myfun(haart_df, death), error = function(e) e)         
+```
+
+What do you think is going on?  Consider using `debug` to trace the problem.
+```{r}
+debugonce(myfun)
+tryCatch(myfun(haart_df, death), error = function(e) e)   
+```
+* From debugging, I found out that the data was not called inside the function so the variable 'death' could not be found. 
+
+**5 bonus points**
+
+Create a working function.
+
+```{r}
+myfun <- function(dat, response) {
+  form <- substitute(as.formula(response ~ .))
+  dat<-substitute(dat)
+  coef(summary(eval(bquote( glm( .(form), data=.(dat), family=binomial(logit))))))
+}
+```
